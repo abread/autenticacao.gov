@@ -105,17 +105,20 @@ unsigned long SSLConnection::getKeyLength() {
 }
 
 
-APL_Certif * SSLConnection::loadCertsFromCard(SSL_CTX *ctx)
+APL_Certif * SSLConnection::loadAuthCertificateFromCard(SSL_CTX *ctx)
 {
-
+	
 	APL_Certif *auth_cert = m_certs->getCert(APL_CERTIF_TYPE_AUTHENTICATION);
+	const unsigned char *cert_data = auth_cert->getData().GetBytes();
 
-	MWLOG(LEV_DEBUG, MOD_APL, "Loading from APL_Certifs -> cert length= %ld", auth_cert->getData().Size());
-	int ret = SSL_CTX_use_certificate_ASN1(ctx, auth_cert->getData().Size(), auth_cert->getData().GetBytes());
+	MWLOG(LEV_DEBUG, MOD_APL, "Loading from APL_Certifs: cert length= %ld", auth_cert->getData().Size());
+	X509 * user_cert = d2i_X509(NULL, &cert_data, auth_cert->getData().Size());
+
+	int ret = SSL_CTX_use_cert_and_key(ctx, user_cert, NULL, NULL, 0);
 
 	if (ret != 1)
 	{
-		MWLOG(LEV_ERROR, MOD_APL, "Error loading Auth certificate for SSL handshake! Detail: %s",
+		MWLOG(LEV_ERROR, MOD_APL, "SSL_CTX_use_cert_and_key: Error loading auth certificate for SSL handshake! Detail: %s",
 			ERR_error_string(ERR_get_error(), NULL));
 	}
 
@@ -1008,7 +1011,7 @@ void SSLConnection::connect_encrypted(char* host_and_port)
     //NOTE: to get more debug output from the SSL layer uncomment this
     //SSL_CTX_set_info_callback(ctx, eIDMW::get_ssl_state_callback);
 
-    APL_Certif * cert = loadCertsFromCard(ctx);
+    APL_Certif * cert = loadAuthCertificateFromCard(ctx);
     X509_STORE *store = SSL_CTX_get_cert_store(ctx);
 
     //Load cert chain for the current card
@@ -1086,42 +1089,14 @@ void SSLConnection::connect_encrypted(char* host_and_port)
     m_ssl_connection = SSL_new(ctx);
     SSL_set_bio (m_ssl_connection, bio, bio);
 
-    RSA *rsa = RSA_new();
-
-    //Generate a dummy private key with the same size as the one residing in the smartcard
-    int rc = 0;
-    BIGNUM * bn = BN_new();
-    //RSA_F4 is the exponent value = 65537 (0x10001)
-    rc = BN_set_word(bn, RSA_F4);
-
-    // Generate key
-    unsigned long key_bits = getKeyLength();
-
     log_server_address(bio);
 
-    MWLOG(LEV_DEBUG, MOD_APL, "Generating dummy key with %lu bits", key_bits);
-
-    rc = RSA_generate_key_ex(rsa, (int)key_bits, bn, NULL);
-
-    if (rc != 1) {
-    	long openssl_error = ERR_get_error();
-    	MWLOG(LEV_ERROR, MOD_APL, "Dummy key generation failed. OpenSSL error: %s", ERR_error_string(openssl_error, NULL));
-    	throw CMWEXCEPTION(translate_openssl_error(openssl_error));
-    }
-
-
+    //Change the default RSA_METHOD to use our function for signing
     RSA_METHOD * current_method = (RSA_METHOD *) RSA_get_default_method();
 
     RSA_meth_set_sign(current_method, eIDMW::rsa_sign);
     RSA_meth_set_flags(current_method, RSA_METHOD_FLAG_NO_CHECK);
-
-    RSA_set_method(rsa, current_method);
-
-    if (SSL_use_RSAPrivateKey(m_ssl_connection, rsa) != 1)
-    {
-        fprintf(stderr, "SSL_CTX_use_RSAPrivateKey failed!");
-        return;
-    }
+    RSA_set_default_method(current_method);
 
     SSL_set_connect_state(m_ssl_connection);
 

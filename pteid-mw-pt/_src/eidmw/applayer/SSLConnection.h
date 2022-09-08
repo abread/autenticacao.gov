@@ -81,7 +81,7 @@ class SSLConnection
 		bool InitConnection();
 		void CloseConnection();
 		BIO * connectToProxyServer(const char * proxy_host, long proxy_port, char *ssl_host, char *proxy_user, char * proxy_pwd, char *ssl_host_andport);
-		APL_Certif * loadCertsFromCard(SSL_CTX *ctx);
+		APL_Certif * loadAuthCertificateFromCard(SSL_CTX *ctx);
 		void loadCertChain(X509_STORE *store, APL_Certif * authentication_cert);
 		void loadAllRootCerts(X509_STORE *store);
 		unsigned long getKeyLength();
